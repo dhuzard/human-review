@@ -13,7 +13,7 @@ and the file itself is never touched — apply every change to the Markdown sour
 keeping its formatting syntax.
 
 LaTeX (`.tex`) files open the same way, rendered to HTML with [pandoc](https://pandoc.org)
-(math as MathML, citations resolved from the document's `.bib` file, `\input` files
+2.15 or newer (math as MathML, citations resolved from the document's `.bib` file, `\input` files
 spliced in). Open the **main** `.tex` file. Quotes and edits reference the rendered
 text, and the `.tex` files are never touched — apply every change to the LaTeX
 source, keeping its markup. Figures drawn in TikZ and other raw LaTeX are not

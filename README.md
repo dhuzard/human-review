@@ -40,13 +40,13 @@ Open an HTML or Markdown file:
 /human-review (your file)
 ```
 
-Open a LaTeX paper (needs [pandoc](https://pandoc.org/installing.html) on your PATH):
+Open a LaTeX paper (needs [pandoc](https://pandoc.org/installing.html) 2.15 or newer on your PATH):
 
 ```text
 /human-review (main.tex)
 ```
 
-The paper is rendered to HTML with math, citations, and `\input` sections in place. Your agent applies each comment to the matching `.tex` source, so you review in the browser and the manuscript stays LaTeX. Review it the way you would a Markdown file: the `.tex` files are never written by Human Review. TikZ figures and other raw LaTeX are not rendered, only their captions.
+The paper is rendered to HTML with math, citations, and `\input` sections in place. Your agent applies each comment to the matching `.tex` source, so you review in the browser and the manuscript stays LaTeX. Review it the way you would a Markdown file: the `.tex` files are never written by Human Review. TikZ figures and other raw LaTeX are not rendered, only their captions. `\input` files and `.bib` files are followed only inside the document's own folder, and editing any of them refreshes the page.
 
 Review a page running on localhost:
 

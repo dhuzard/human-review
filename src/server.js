@@ -328,7 +328,8 @@ export function createServer() {
       try {
         if (isLatex(page.file)) {
           const source = loadLatex(page.file);
-          html = source.text;
+          // Changes to a section or a .bib file must read as a change.
+          html = source.fingerprint;
           follow(source);
         } else {
           html = fs.readFileSync(page.file, "utf8");
@@ -1167,6 +1168,14 @@ export function createServer() {
         if (action === "revert" && req.method === "POST") {
           const page = store.page(key);
           if (page.kind === "url") return json(res, 400, { error: "localhost pages have no directly writable file to revert" });
+          // Edits on a Markdown or LaTeX page were never written to its file, so
+          // there is nothing to put back. Writing `pristine` here would be wrong
+          // for LaTeX, where it holds the flattened document, not the source.
+          if (isRenderedSource(page.file)) {
+            store.clearEdits(key);
+            for (const session of sessionsForKey(key)) emit(session, "reload", { key });
+            return json(res, 200, { page: pageState(key) });
+          }
           if (!page.pristine) return json(res, 400, { error: "nothing to revert to" });
           writePage(key, page.pristine);
           store.clearEdits(key);
