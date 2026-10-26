@@ -119,7 +119,7 @@ merge already left with conflict markers.
 - [`chrome-client.js`](src/chrome-client.js) contains the visual review interface.
 - [`markdown.js`](src/markdown.js) renders Markdown files for review.
 - [`latex.js`](src/latex.js) renders LaTeX files for review through pandoc.
-- [`threads.js`](src/threads.js) stores shared threads beside the reviewed file, and [`thread-cli.js`](src/thread-cli.js) gives agents and people the thread commands.
+- [`threads.js`](src/threads.js) stores shared threads beside the reviewed file, [`thread-cli.js`](src/thread-cli.js) gives agents and people the thread commands, and [`thread-git.js`](src/thread-git.js) merges threads across branches.
 - [`SKILL.md`](src/SKILL.md) teaches Claude Code, Codex, and other agents how to use Human Review.
 
 Everything runs on your computer. Human Review doesn’t require an account, cloud service, database, or API key.
