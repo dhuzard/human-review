@@ -74,8 +74,29 @@ Note: For HTML files, direct edits and resizes save automatically, so closing th
 - **Edit a comment** after writing it, even one already sent — a reworded comment reaches the agent with the next Send.
 - **Command-click links** to review multiple pages without losing your feedback.
 - **Send every edit and comment at once** instead of writing a long chat message.
+- **Discuss with co-authors and agents** — switch a comment to *Comment* or *Suggest* to make it a shared thread that everyone reviewing the file can reply to, resolve, or accept (see below).
 
 I use Human Review to edit AI-generated plans, update landing pages, review localhost apps, and remove the extra copy AI likes to add to UX.
+
+## Shared threads: reviewing with co-authors and agents
+
+Private comments go only to your own agent. **Shared threads** are for everyone
+who reviews the same file — people and agents alike:
+
+- Select text, then pick **Comment** for a discussion or **Suggest** to propose
+  replacement text. Others reply, resolve comments, and accept or reject
+  suggestions in the *Discussion* section of the rail.
+- Tick **Ask an agent** to put a thread on an agent's list. It arrives with your
+  next Send, and the agent answers in the thread. Accepted suggestions are
+  applied to the source by an agent, which then marks them applied.
+- Agents take part through the CLI (`human-review threads`, `comment`, `suggest`,
+  `reply`, `accept`, `applied`, …; run `human-review --help`), signed with their
+  name and model.
+
+Threads are stored next to the file, one JSON file per thread, in
+`<file>.review/` — commit that folder and co-authors see each other's threads
+after a `git pull`. Nothing leaves your machine except through your own git
+remote. Your name comes from `git config user.name`.
 
 ## What’s inside
 
@@ -85,6 +106,7 @@ I use Human Review to edit AI-generated plans, update landing pages, review loca
 - [`chrome-client.js`](src/chrome-client.js) contains the visual review interface.
 - [`markdown.js`](src/markdown.js) renders Markdown files for review.
 - [`latex.js`](src/latex.js) renders LaTeX files for review through pandoc.
+- [`threads.js`](src/threads.js) stores shared threads beside the reviewed file, and [`thread-cli.js`](src/thread-cli.js) gives agents and people the thread commands.
 - [`SKILL.md`](src/SKILL.md) teaches Claude Code, Codex, and other agents how to use Human Review.
 
 Everything runs on your computer. Human Review doesn’t require an account, cloud service, database, or API key.

@@ -7,6 +7,7 @@ import { atomicWrite, Store, resolveAsset } from "./state.js";
 import { injectSdk, stripSdk } from "./html-transform.js";
 import { isMarkdown, renderMarkdownPage } from "./markdown.js";
 import { isLatex, loadLatex, renderLatexPage } from "./latex.js";
+import { agentWork, createThread, humanAuthor, listThreads, replyToThread, setAskAgent, setThreadStatus, threadsSignature } from "./threads.js";
 import { canonicalTarget, ensureStateDir, localUrl, SERVER_PROTOCOL, serverPath, stateDir, targetKey } from "./paths.js";
 import { invocation, shellQuote } from "./setup.js";
 
@@ -37,6 +38,8 @@ const MIME = {
 const MAX_BODY = 24 * 1024 * 1024;
 const POLL_HEARTBEAT_MS = 15000;
 const WATCH_INTERVAL_MS = 400;
+// How often open pages check their shared-thread folder for outside writes.
+const THREAD_WATCH_MS = Number(process.env.HUMAN_REVIEW_THREAD_WATCH_MS || 1500);
 const IDLE_SHUTDOWN_MS = Number(process.env.HUMAN_REVIEW_IDLE_MS || 45 * 60 * 1000);
 /** A window with no live connection this long is treated as closed for good. */
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -232,6 +235,18 @@ export function createServer() {
   }
 
   /**
+   * Shared threads change from three places: this browser, an agent's CLI
+   * write, and a `git pull`. The last fingerprint seen per page lets the
+   * watcher tell them apart from no change at all.
+   */
+  const threadSigs = new Map();
+  function notifyThreads(key) {
+    const page = store.page(key);
+    if (page && page.kind !== "url") threadSigs.set(key, threadsSignature(page.file));
+    for (const session of sessionsForKey(key)) emit(session, "threads", { key });
+  }
+
+  /**
    * What a page's feedback the agent already has, or that is waiting for it:
    * every comment id and edit timestamp covered by a batch that is sent and
    * not yet acked. Those items stay on the page until the ack, but they are
@@ -411,7 +426,10 @@ export function createServer() {
       const coveredUntil = covered.reduce((max, entry) => Math.max(max, entry.sentAt || 0), 0);
       const comments = page.comments.filter((c) => !coveredIds.has(c.id));
       const edits = page.edits.filter((e) => (e.updatedAt || e.at || 0) >= coveredUntil);
-      if (!comments.length && !edits.length) continue;
+      // Shared threads waiting on an agent ride along until an agent acts on
+      // them; they are cleared by that action, never by an ack.
+      const threads = page.kind === "url" ? [] : agentWork(listThreads(page.file));
+      if (!comments.length && !edits.length && !threads.length) continue;
       const markdown = page.kind !== "url" && isMarkdown(page.file);
       const latex = page.kind !== "url" && isLatex(page.file);
       out.push({
@@ -441,6 +459,17 @@ export function createServer() {
           ...(e.kind === "moved" ? { moved_after: e.moved_after || "", moved_before: e.moved_before || "" } : {}),
           ...(Array.isArray(e.staged_assets) && e.staged_assets.length ? { staged_assets: e.staged_assets } : {}),
           ...(e.truncated ? { truncated: true } : {}),
+        })),
+        threads: threads.map((t) => ({
+          id: t.id,
+          kind: t.kind,
+          status: t.status,
+          ask_agent: !!t.ask_agent,
+          quote: t.anchor.quote,
+          anchor: t.anchor,
+          ...(t.kind === "suggestion" ? { replacement: t.replacement } : {}),
+          author: t.author,
+          messages: t.messages.map((m) => ({ author: m.author, body: m.body, at: m.at })),
         })),
       });
     }
@@ -484,9 +513,10 @@ export function createServer() {
     const hasUrl = pages.some((p) => p.kind === "url");
     const hasSaved = pages.some((p) => p.edits_saved && p.edits.length);
     const hasTruncated = pages.some((p) => p.edits.some((e) => e.truncated));
+    const hasThreads = pages.some((p) => p.threads.length);
     const batch = {
       status: "feedback",
-      pages: pages.map(({ kind, file, url, markdown, latex, edits_saved, comments, edits }) => ({
+      pages: pages.map(({ kind, file, url, markdown, latex, edits_saved, comments, edits, threads }) => ({
         kind,
         file,
         ...(url ? { url } : {}),
@@ -495,6 +525,7 @@ export function createServer() {
         edits_saved,
         comments,
         edits,
+        ...(threads.length ? { threads } : {}),
       })),
       overall_note: note || "",
       sent_at: new Date().toISOString(),
@@ -525,6 +556,15 @@ export function createServer() {
             "and apply every exact edit or deletion there; never try to write the rendered HTML response back to the app. " +
             "When an edit includes `staged_assets`, copy each local image into the app's appropriate asset folder, replace its " +
             "temporary preview URL in `after_html`, and preserve the image at the user's insertion point. "
+          : "") +
+        (hasThreads
+          ? "Items under `threads` are shared review threads that co-authors and other agents also see; they are " +
+            "stored beside the file and change only through the CLI. An open thread with `ask_agent: true` is a " +
+            "question or request for you: do what it asks in the source, then answer it with `" + cliInvocation +
+            " reply <file> <id> --agent <your name> --model <model id> --body <answer>`. A `suggestion` with " +
+            "`status: accepted` must be applied: replace its quoted text (rendered text, like edits) with " +
+            "`replacement` in the source, then run `" + cliInvocation + " applied <file> <id> --agent <your name>`. " +
+            "Never edit the `.review` folder by hand. "
           : "") +
         "When every page is updated, run the same poll command again with --ack to clear this " +
         "batch and wait for more.",
@@ -700,6 +740,12 @@ export function createServer() {
   // from the review shell, so its SDK module needs CORS to load.
   const CORS = { "access-control-allow-origin": "*" };
 
+  /** Shared threads live beside the file; a localhost route has nowhere to keep them. */
+  function threadFields(file) {
+    const threads = listThreads(file);
+    return { threads, me: humanAuthor(file), agentThreads: agentWork(threads).length };
+  }
+
   function pageState(key, session) {
     const page = store.page(key);
     if (!page) return null;
@@ -723,6 +769,7 @@ export function createServer() {
         comments: page.comments.filter((c) => !coverage.ids.has(c.id)).length,
         edits: page.edits.filter((e) => !isSentEdit(e, coverage)).length,
       },
+      ...(page.kind === "url" ? {} : threadFields(page.file)),
       canRevert: page.kind !== "url" && typeof page.pristine === "string" && page.pristine.length > 0,
       pollCommand: `${cliInvocation} poll ${shellQuote(pollTarget)}`,
     };
@@ -1002,6 +1049,35 @@ export function createServer() {
           if (!comment.feedback) return json(res, 400, { error: "empty feedback" });
           store.addComment(key, comment);
           return json(res, 200, { comment, page: pageState(key) });
+        }
+
+        if (action === "thread" && req.method === "POST") {
+          const page = store.page(key);
+          if (page.kind === "url") return json(res, 400, { error: "shared threads need a file; a localhost page has nowhere to keep them" });
+          const body = await readBody(req);
+          // The browser always speaks for the person at this machine.
+          const me = humanAuthor(page.file);
+          const [id, verb] = String(tail || "").split("/");
+          try {
+            let thread = null;
+            if (!tail) {
+              thread = createThread(page.file, {
+                kind: body.kind,
+                anchor: body.anchor,
+                replacement: body.replacement,
+                body: body.body,
+                author: me,
+                askAgent: body.askAgent,
+              });
+            } else if (verb === "reply") thread = replyToThread(page.file, id, { body: body.body, author: me });
+            else if (verb === "status") thread = setThreadStatus(page.file, id, String(body.status || ""), { author: me, note: body.note });
+            else if (verb === "ask") thread = setAskAgent(page.file, id, !!body.ask);
+            else return json(res, 404, { error: "unknown thread action" });
+            notifyThreads(key);
+            return json(res, 200, { thread, page: pageState(key) });
+          } catch (err) {
+            return json(res, 400, { error: String(err.message || err) });
+          }
         }
 
         if (action === "comment" && req.method === "DELETE") {
@@ -1382,8 +1458,23 @@ export function createServer() {
   }, 60000);
   sweep.unref();
 
+  // Threads written outside this browser (an agent's CLI, a git pull) show up
+  // within a couple of seconds on every open page they belong to.
+  const threadWatch = setInterval(() => {
+    const keys = new Set([...sessions.values()].filter((s) => s.clients.size > 0).map((s) => s.activeKey));
+    for (const key of keys) {
+      const page = store.page(key);
+      if (!page || page.kind === "url") continue;
+      const sig = threadsSignature(page.file);
+      if (!threadSigs.has(key)) threadSigs.set(key, sig);
+      else if (threadSigs.get(key) !== sig) notifyThreads(key);
+    }
+  }, THREAD_WATCH_MS);
+  threadWatch.unref();
+
   const dispose = () => {
     clearInterval(sweep);
+    clearInterval(threadWatch);
     for (const entry of watched.values()) for (const file of entry.files) fs.unwatchFile(file);
     watched.clear();
     server.close();

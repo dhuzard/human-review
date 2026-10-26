@@ -711,6 +711,8 @@ function reanchor(comments) {
       continue;
     }
     const marks = wrapOffsets(map, hit.start, hit.end, comment.id);
+    // Shared threads read differently from private feedback at a glance.
+    if (comment.shared) for (const mark of marks) mark.classList.add(comment.shared === "suggestion" ? "eh-suggest" : "eh-thread");
     (marks.length ? resolved : orphaned).push(comment.id);
   }
   post("eh:anchorStatus", { resolved, orphaned });
@@ -765,6 +767,13 @@ function boot() {
     mark[${MARK_ATTR}] { background: rgba(245,196,0,.32); border-radius: 2px; color: inherit; cursor: pointer; }
     mark[${MARK_ATTR}]:hover { background: rgba(243,176,0,.5); }
     mark[${MARK_ATTR}].eh-active { background: rgba(255,180,0,.55); }
+    mark[${MARK_ATTR}].eh-thread { background: rgba(70,130,230,.18); }
+    mark[${MARK_ATTR}].eh-thread:hover, mark[${MARK_ATTR}].eh-thread.eh-active { background: rgba(70,130,230,.38); }
+    mark[${MARK_ATTR}].eh-suggest {
+      background: rgba(60,160,90,.16);
+      text-decoration: line-through; text-decoration-color: rgba(178,59,46,.75);
+    }
+    mark[${MARK_ATTR}].eh-suggest:hover, mark[${MARK_ATTR}].eh-suggest.eh-active { background: rgba(60,160,90,.34); }
     body[contenteditable]:focus { outline: none; }
     ::selection { background: rgba(245,196,0,.42); }
   `;

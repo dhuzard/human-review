@@ -178,6 +178,37 @@ One batch covers every page the user visited, grouped by file or localhost URL.
 - **Do not write a reply.** There is no chat. The user sees your work when the page
   reloads, which happens on its own the moment you save the file.
 
+## Shared threads
+
+Besides the private feedback above, a file can carry **shared threads**: comments
+and suggested changes that every co-author and every agent reviewing it can see,
+answer, and resolve. They live beside the file, one JSON file per thread, in
+`<file>.review/` (e.g. `paper.tex.review/`), and travel between people through
+git like the file itself. Never edit that folder by hand; use these commands,
+which work whether or not a review is open (an open page updates within seconds):
+
+```sh
+npx -y human-review threads paper.tex --for-agent      # what is waiting on an agent
+npx -y human-review text paper.tex                     # the rendered text quotes must match
+npx -y human-review comment paper.tex --quote "exact rendered text" --body "…" --agent "<your name>" --model "<model id>"
+npx -y human-review suggest paper.tex --quote "old text" --replacement "new text" --body "why" --agent "<your name>" --model "<model id>"
+npx -y human-review reply paper.tex <thread-id> --body "…" --agent "<your name>" --model "<model id>"
+npx -y human-review applied paper.tex <thread-id> --agent "<your name>"
+```
+
+- Always pass `--agent` (and `--model`) when you write, so people can tell your
+  words from theirs. Without it the command writes as the git user.
+- Quotes are **rendered** text, as in feedback batches. If a quote appears more
+  than once, add `--prefix` or `--suffix`; if it is not found, read `text`.
+- Threads waiting on you also arrive in feedback batches under `threads`:
+  - an open thread with `ask_agent: true` asks you something. Do what it asks
+    in the source, then `reply` (replying clears the ask);
+  - a `suggestion` with `status: "accepted"` must be applied: replace its quote
+    with `replacement` in the source, then run `applied`.
+- Leave decisions to the people involved unless asked: you may `accept`,
+  `reject`, or `resolve` threads, but do so only when a human asked you to or the
+  thread is your own.
+
 ## Better edit labels (optional)
 
 Name the sections you author and the user's edit list uses your names instead of
