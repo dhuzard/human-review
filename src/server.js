@@ -21,6 +21,7 @@ import {
   withColors,
   writeProfile,
 } from "./threads.js";
+import { adoptThread, combinedThreads, fetchRemotes, refsStamp } from "./thread-git.js";
 import { canonicalTarget, ensureStateDir, localUrl, SERVER_PROTOCOL, serverPath, stateDir, targetKey } from "./paths.js";
 import { invocation, shellQuote } from "./setup.js";
 
@@ -255,7 +256,7 @@ export function createServer() {
   const threadSigs = new Map();
   function notifyThreads(key) {
     const page = store.page(key);
-    if (page && page.kind !== "url") threadSigs.set(key, threadsSignature(page.file));
+    if (page && page.kind !== "url") threadSigs.set(key, threadsSignature(page.file) + refsStamp(page.file));
     for (const session of sessionsForKey(key)) emit(session, "threads", { key });
   }
 
@@ -755,8 +756,15 @@ export function createServer() {
 
   /** Shared threads live beside the file; a localhost route has nowhere to keep them. */
   function threadFields(file) {
-    const threads = listThreads(file).map(withColors);
-    return { threads, me: humanAuthor(file), agentThreads: agentWork(threads).length };
+    // Other branches (open pull requests) are folded in for reading; agent work
+    // stays this branch's own, since that is where an agent would act.
+    let threads;
+    try {
+      threads = combinedThreads(file);
+    } catch {
+      threads = listThreads(file);
+    }
+    return { threads: threads.map(withColors), me: humanAuthor(file), agentThreads: agentWork(listThreads(file)).length };
   }
 
   function pageState(key, session) {
@@ -1084,6 +1092,14 @@ export function createServer() {
           const [id, verb] = String(tail || "").split("/");
           try {
             let thread = null;
+            if (verb === "fetch" || tail === "fetch") {
+              fetchRemotes(page.file);
+              notifyThreads(key);
+              return json(res, 200, { page: pageState(key) });
+            }
+            // A thread from another branch, or with replies there, comes onto
+            // this branch whole before anyone adds to it.
+            if (id && verb) adoptThread(page.file, id);
             if (!tail) {
               thread = createThread(page.file, {
                 kind: body.kind,
@@ -1489,7 +1505,7 @@ export function createServer() {
     for (const key of keys) {
       const page = store.page(key);
       if (!page || page.kind === "url") continue;
-      const sig = threadsSignature(page.file);
+      const sig = threadsSignature(page.file) + refsStamp(page.file);
       if (!threadSigs.has(key)) threadSigs.set(key, sig);
       else if (threadSigs.get(key) !== sig) notifyThreads(key);
     }

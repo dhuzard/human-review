@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildContext, findQuote, tidy } from "./anchor-text.js";
 import { renderedText } from "./page-text.js";
+import { invocation } from "./setup.js";
+import { adoptThread, combinedThreads, fixThreads, mergeDriver, setupGit } from "./thread-git.js";
 import {
   agentWork,
   createThread,
@@ -23,9 +25,10 @@ import {
 
 export const THREAD_HELP = `
 Shared review threads (stored beside the file in <file>.review/, meant to be committed):
-  human-review threads <file>         List open threads and accepted suggestions
+  human-review threads <file>         List open threads and accepted suggestions, this branch and fetched ones
       --all                        Include resolved, rejected, and applied threads
-      --for-agent                  Only threads waiting on an agent
+      --for-agent                  Only this branch's threads waiting on an agent
+      --local                      Only this branch, without other branches' threads
       --json                       Print the threads as JSON
   human-review text <file>            Print the rendered text that thread quotes must match
   human-review comment <file> --quote <text> --body <message> [--ask-agent]
@@ -37,9 +40,13 @@ Shared review threads (stored beside the file in <file>.review/, meant to be com
       --as <name>                  Write as a named person
       --color <#rrggbb>            Highlight colour for what you write (default: your profile's, or one picked from the name)
   human-review profile [--name <name>] [--color <#rrggbb>]  Show or set your reviewer name and colour
+
+Working across branches and pull requests:
+  human-review setup --git            Merge shared threads instead of conflicting (run once per clone)
+  human-review fix-threads [<path>]   Repair thread files git left with conflict markers
 `;
 
-export const THREAD_COMMANDS = new Set(["profile", "threads", "text", "comment", "suggest", "reply", "resolve", "reopen", "accept", "reject", "applied"]);
+export const THREAD_COMMANDS = new Set(["merge-thread", "fix-threads", "profile", "threads", "text", "comment", "suggest", "reply", "resolve", "reopen", "accept", "reject", "applied"]);
 
 const STATUS_VERBS = { resolve: "resolved", reopen: "open", accept: "accepted", reject: "rejected", applied: "applied" };
 
@@ -101,7 +108,9 @@ async function anchorFor(file, flags) {
 const who = (a) => (a.type === "agent" ? `${a.name} (agent${a.model ? `, ${a.model}` : ""})` : a.name);
 
 function describe(thread) {
-  const lines = [`${thread.id}  ${thread.kind} · ${thread.status}${thread.ask_agent ? " · ask agent" : ""} · ${who(thread.author)}`];
+  const where = thread.elsewhere ? ` · only on ${thread.branches.join(", ")}` : thread.updates_elsewhere ? ` · updates on ${thread.branches.join(", ")}` : "";
+  const lines = [`${thread.id}  ${thread.kind} · ${thread.status}${thread.conflict ? " · CONFLICT" : ""}${thread.ask_agent ? " · ask agent" : ""} · ${who(thread.author)}${where}`];
+  if (thread.conflict) lines.push(`  branches disagree: ${thread.conflict.outcomes.map((o) => `${o.by ? o.by.name : "someone"} -> ${o.status}`).join(" vs ")}`);
   lines.push(`  "${tidy(thread.anchor.quote, 160)}"`);
   if (thread.kind === "suggestion") lines.push(`  -> "${tidy(thread.replacement, 160)}"`);
   for (const m of thread.messages) lines.push(`  ${who(m.author)}: ${tidy(m.body, 400)}`);
@@ -112,7 +121,29 @@ const print = (thread) => process.stdout.write(`${JSON.stringify(thread, null, 2
 
 export async function runThreadCommand(argv) {
   const [command, ...rest] = argv;
+
+  // git's merge driver: base, ours, theirs. Exit 1 hands the file back to git as a conflict.
+  if (command === "merge-thread") {
+    const [base, ours, theirs] = rest;
+    if (!mergeDriver(base, ours, theirs)) process.exit(1);
+    return;
+  }
+
   const { flags, positional } = parse(rest);
+
+  if (command === "fix-threads") {
+    const results = fixThreads(positional[0] || process.cwd());
+    if (flags.json) process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+    else if (!results.length) process.stdout.write("No thread files with conflict markers.\n");
+    else {
+      for (const r of results) {
+        const where = path.relative(process.cwd(), r.file) || r.file;
+        process.stdout.write(`${r.fixed ? (r.conflict ? "merged, decision needed" : "merged") : `left as is (${r.reason})`}  ${where}\n`);
+      }
+    }
+    if (results.some((r) => !r.fixed)) process.exitCode = 1;
+    return;
+  }
 
   if (command === "profile") {
     let profile = readProfile();
@@ -122,8 +153,7 @@ export async function runThreadCommand(argv) {
         color: flags.color !== undefined ? checkColor(flags.color) : profile.color,
       });
     }
-    process.stdout.write(`${JSON.stringify({ ...profile, palette: PALETTE }, null, 2)}
-`);
+    process.stdout.write(`${JSON.stringify({ ...profile, palette: PALETTE }, null, 2)}\n`);
     return;
   }
 
@@ -135,7 +165,7 @@ export async function runThreadCommand(argv) {
   }
 
   if (command === "threads") {
-    let threads = listThreads(file);
+    let threads = flags.local || flags["for-agent"] ? listThreads(file) : combinedThreads(file);
     if (flags["for-agent"]) threads = agentWork(threads);
     else if (!flags.all) threads = threads.filter((t) => t.status === "open" || t.status === "accepted");
     if (flags.json) {
@@ -165,6 +195,8 @@ export async function runThreadCommand(argv) {
 
   const id = positional[1];
   if (!id) throw new Error(`Usage: human-review ${command} <file> <thread-id>`);
+  // Answering a thread from another branch brings it onto this one first.
+  adoptThread(file, id);
   if (command === "reply") {
     print(replyToThread(file, id, { body: flags.body, author: me }));
     return;

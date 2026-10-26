@@ -754,7 +754,7 @@ function badge(text, extra = "") {
 
 function threadCard(thread) {
   const card = document.createElement("div");
-  card.className = `comment thread ${thread.kind}${state.active === thread.id ? " active" : ""}${isLive(thread) ? "" : " closed"}`;
+  card.className = `comment thread ${thread.kind}${state.active === thread.id ? " active" : ""}${isLive(thread) ? "" : " closed"}${thread.elsewhere ? " elsewhere" : ""}`;
   card.dataset.id = thread.id;
 
   const head = document.createElement("div");
@@ -772,6 +772,17 @@ function threadCard(thread) {
   who.append(sep, when, badge((STATUS_LABEL[thread.kind] || {})[thread.status] || thread.status, `st-${thread.status}`));
   if (thread.ask_agent && isLive(thread)) who.append(badge("agent asked", "agent"));
   if (isLive(thread) && state.orphans.has(thread.id)) who.append(badge("orphaned"));
+  if (thread.conflict) who.append(badge("conflict", "conflict"));
+  // Where else this thread lives: another branch or pull request.
+  if (thread.branches && thread.branches.length) {
+    const label = thread.elsewhere ? `on ${thread.branches[0]}` : thread.updates_elsewhere ? `updated on ${thread.branches[0]}` : "";
+    if (label) {
+      const more = thread.branches.length > 1 ? ` +${thread.branches.length - 1}` : "";
+      const chip = badge(`${label}${more}`, "branch");
+      chip.title = `Also on: ${thread.branches.join(", ")}`;
+      who.append(chip);
+    }
+  }
   const jump = document.createElement("button");
   jump.type = "button";
   jump.className = "jump";
@@ -849,6 +860,13 @@ function threadCard(thread) {
   });
 
   card.append(head, quote);
+  if (thread.conflict) {
+    const note = document.createElement("p");
+    note.className = "conflict-note";
+    const outcomes = (thread.conflict.outcomes || []).map((o) => `${o.by ? o.by.name : "someone"} ${o.status === "open" ? "reopened it" : `marked it ${o.status}`}`);
+    note.textContent = `Branches disagree: ${outcomes.join(", but ")}. Decide again below.`;
+    card.append(note);
+  }
   if (thread.messages.length) card.append(msgs);
   card.append(actions, reply);
   card.addEventListener("click", () => setActive(thread.id, false));
@@ -1177,6 +1195,22 @@ $("profileName").addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     event.preventDefault();
     closeProfile();
+  }
+});
+$("threadFetch").addEventListener("click", async () => {
+  const button = $("threadFetch");
+  button.disabled = true;
+  button.textContent = "Fetching…";
+  try {
+    state.page = (await api(`/api/page/${state.key}/thread/fetch`, { method: "POST", body: "{}" })).page;
+    syncThreadAnchors();
+    render();
+    toast("Fetched: threads from other branches are up to date");
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Fetch";
   }
 });
 $("threadClosed").addEventListener("click", () => {

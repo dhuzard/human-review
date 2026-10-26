@@ -5,7 +5,8 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { canonicalTarget, ensureStateDir, SERVER_PROTOCOL, serverPath, statePath, targetKey } from "./paths.js";
-import { installSkills, shellQuote } from "./setup.js";
+import { installSkills, invocation, shellQuote } from "./setup.js";
+import { setupGit } from "./thread-git.js";
 import { runThreadCommand, THREAD_COMMANDS, THREAD_HELP } from "./thread-cli.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -346,7 +347,8 @@ try {
     await runThreadCommand(argv);
   } else if (argv[0] === "setup") {
     const isGlobal = argv.includes("--global") || argv.includes("-g");
-    installSkills(process.cwd(), { global: isGlobal }).forEach((line) => console.log(line));
+    if (argv.includes("--git")) setupGit(process.cwd(), invocation()).forEach((line) => console.log(line));
+    else installSkills(process.cwd(), { global: isGlobal }).forEach((line) => console.log(line));
   } else {
     await openCommand(argv[0]);
   }

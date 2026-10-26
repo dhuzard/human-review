@@ -274,6 +274,8 @@ export function setThreadStatus(file, id, status, { author, note = "" } = {}) {
     const who = cleanAuthor(author, humanAuthor(file));
     thread.status = status;
     thread.history.push({ status, by: who, at: now() });
+    // A human or agent deciding again settles a decision two branches disagreed on.
+    delete thread.conflict;
     const text = cleanBody(note);
     if (text) thread.messages.push({ id: newMessageId(), author: who, body: text, at: now() });
     if (status !== "open" && status !== "accepted") thread.ask_agent = false;
@@ -284,4 +286,112 @@ export function setAskAgent(file, id, ask) {
   return mutate(file, id, (thread) => {
     thread.ask_agent = !!ask;
   });
+}
+
+// ------------------------------------------------------------------ merging
+
+/**
+ * Combine two versions of one thread, as two branches left it. Messages and
+ * status changes are append-only records, so both sides keep all of theirs.
+ * The one thing that can genuinely disagree is the decision: when each side
+ * moved the status somewhere different, neither wins. The thread reopens with
+ * a `conflict` naming both outcomes, for a person to decide again.
+ *
+ * The shared starting point is read from the history both sides still have in
+ * common, so this works the same with or without git's base version.
+ *
+ * `record: false` only flags a disagreement, for showing other branches
+ * without writing; a real merge also records it in the thread.
+ */
+export function mergeThreads(ours, theirs, { record = true } = {}) {
+  if (!ours) return theirs;
+  if (!theirs) return ours;
+  if (ours.id !== theirs.id) throw new Error(`cannot merge different threads (${ours.id}, ${theirs.id})`);
+
+  const historyKey = (h) => `${h.status}|${h.at}|${(h.by && h.by.name) || ""}`;
+  const theirKeys = new Set((theirs.history || []).map(historyKey));
+  const common = (ours.history || []).filter((h) => theirKeys.has(historyKey(h)));
+  const baseStatus = common.length ? common[common.length - 1].status : "open";
+
+  const byTime = (a, b) => String(a.at).localeCompare(String(b.at));
+  const history = [...new Map([...(ours.history || []), ...(theirs.history || [])].map((h) => [historyKey(h), h])).values()].sort(byTime);
+  const messages = [...new Map([...ours.messages, ...theirs.messages].map((m) => [m.id, m])).values()].sort(
+    (a, b) => byTime(a, b) || String(a.id).localeCompare(String(b.id))
+  );
+
+  const latest = String(ours.updated_at) >= String(theirs.updated_at) ? ours : theirs;
+  const merged = {
+    ...latest,
+    messages,
+    history,
+    updated_at: latest.updated_at,
+    ask_agent: ours.ask_agent === theirs.ask_agent ? !!ours.ask_agent : !!latest.ask_agent,
+  };
+  delete merged.conflict;
+
+  const lastBy = (side) => [...(side.history || [])].reverse().find((h) => h.status === side.status) || null;
+  if (ours.status === theirs.status) merged.status = ours.status;
+  else if (ours.status === baseStatus) merged.status = theirs.status;
+  else if (theirs.status === baseStatus) merged.status = ours.status;
+  else {
+    const sides = [ours, theirs].map((side) => {
+      const h = lastBy(side);
+      return { status: side.status, by: h ? h.by : null, at: h ? h.at : side.updated_at };
+    });
+    merged.status = "open";
+    merged.conflict = { reason: "two branches decided differently", outcomes: sides };
+    if (!record) return fill(merged, theirs);
+    const names = sides.map((s) => `${s.by ? s.by.name : "someone"} ${s.status === "open" ? "reopened it" : `marked it ${s.status}`}`);
+    const at = new Date().toISOString();
+    merged.history = [...merged.history, { status: "open", by: { name: "human-review", type: "system" }, at }];
+    merged.messages = [
+      ...merged.messages,
+      {
+        id: `m_${crypto.randomBytes(4).toString("hex")}`,
+        author: { name: "human-review", type: "system" },
+        body: `Merged branches disagree: ${names.join(", but ")}. Reopened for a decision.`,
+        at,
+      },
+    ];
+    merged.updated_at = at;
+  }
+  return fill(merged, theirs);
+}
+
+/** A thread from either side may predate a field the other has. */
+function fill(merged, other) {
+  for (const field of ["format", "id", "file", "kind", "anchor", "replacement", "author", "created_at"]) {
+    if (merged[field] === undefined && other[field] !== undefined) merged[field] = other[field];
+  }
+  return merged;
+}
+
+/**
+ * Split a file git left with conflict markers into the two versions it came
+ * from. Text outside the conflict blocks belongs to both. Returns null when the
+ * file has no markers. Handles git's default and diff3 styles.
+ */
+export function splitConflict(text) {
+  if (!/^<{7}( |$)/m.test(text)) return null;
+  const ours = [];
+  const theirs = [];
+  let side = "both";
+  for (const line of text.split(/\r?\n/)) {
+    if (/^<{7}( |$)/.test(line)) side = "ours";
+    else if (/^\|{7}( |$)/.test(line) && side === "ours") side = "base";
+    else if (/^={7}$/.test(line) && (side === "ours" || side === "base")) side = "theirs";
+    else if (/^>{7}( |$)/.test(line) && side === "theirs") side = "both";
+    else if (side === "both") {
+      ours.push(line);
+      theirs.push(line);
+    } else if (side === "ours") ours.push(line);
+    else if (side === "theirs") theirs.push(line);
+  }
+  return { ours: ours.join("\n"), theirs: theirs.join("\n") };
+}
+
+/** Write a thread exactly as given: a merge result, or a copy adopted from another branch. */
+export function saveThread(file, thread) {
+  if (!thread || thread.format !== THREAD_FORMAT || !validId(thread.id)) throw new Error("not a human-review thread");
+  return write(file, thread);
 }

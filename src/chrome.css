@@ -572,3 +572,10 @@ body.collapsed .handle { right: 0; }
 .swatches button.on { border-color: var(--strong-txt); }
 .thread .who .swatch { margin-right: 5px; vertical-align: 0; }
 .msg .msg-who .swatch { width: 7px; height: 7px; margin-right: 4px; }
+
+/* Threads from other branches (open pull requests) and merge disagreements. */
+#threadClosed:not([hidden]) + #threadFetch { margin-left: 8px; }
+.thread.elsewhere { border-style: dashed; }
+.badge.branch { color: var(--mute); font-weight: 500; }
+.badge.conflict { background: var(--danger-soft); color: var(--danger); }
+.conflict-note { margin: 0 0 9px; padding: 7px 9px; border-radius: 6px; background: var(--danger-soft); color: var(--danger); font-size: 11.5px; line-height: 1.45; }

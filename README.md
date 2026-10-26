@@ -99,7 +99,17 @@ who reviews the same file — people and agents alike:
 Threads are stored next to the file, one JSON file per thread, in
 `<file>.review/` — commit that folder and co-authors see each other's threads
 after a `git pull`. Nothing leaves your machine except through your own git
-remote. Your name comes from `git config user.name`.
+remote. Your name comes from your profile, else `git config user.name`.
+
+**Across pull requests.** The Discussion also shows threads from other branches
+you have fetched (click **Fetch**), marked with their branch, so co-authors on
+separate pull requests see each other's comments before anything is merged.
+Replying to one brings it onto your branch. Run `human-review setup --git` once
+per clone (and commit the `.gitattributes` line it adds) so git merges thread
+files instead of conflicting: both sides' replies are kept, and if two branches
+made different decisions on a suggestion, it reopens with a note naming both
+for the authors to settle. `human-review fix-threads` repairs thread files a
+merge already left with conflict markers.
 
 ## What’s inside
 

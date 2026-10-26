@@ -211,6 +211,27 @@ npx -y human-review applied paper.tex <thread-id> --agent "<your name>"
   `reject`, or `resolve` threads, but do so only when a human asked you to or the
   thread is your own.
 
+### Branches, pull requests, and merge conflicts
+
+Each co-author usually works on their own branch or pull request. `threads`
+(and the review page) also show threads from other fetched branches, marked
+with the branch name; run `git fetch` first. Replying to one copies it onto
+the current branch, and it merges cleanly later.
+
+- In a repository with shared threads, run `npx -y human-review setup --git` once
+  per clone and commit the `.gitattributes` line it adds. Git then merges thread
+  files itself: replies from both sides are kept.
+- If git (or a hosting site's merge) still left conflict markers in
+  `*.review/*.json`, run `npx -y human-review fix-threads` — never hand-edit them.
+  A thread where branches made **different decisions** (one accepted, one
+  rejected) comes back open with a `conflict` note: do not pick a side; tell the
+  user which threads need a decision.
+- When the **reviewed file itself** conflicts (two branches rewrote the same
+  passage), do not silently choose. Keep one version so the file builds, then
+  post the other — or a combined wording — as a `suggest` thread on that passage
+  with `--ask-agent` off and a `--body` naming both branches, so the authors
+  accept or reject it. Tell the user each place you did this.
+
 ## Better edit labels (optional)
 
 Name the sections you author and the user's edit list uses your names instead of
