@@ -147,7 +147,11 @@ function otherRefs(root) {
 export function branchThreads(file) {
   const root = repoRoot(file);
   if (!root) return new Map();
-  const rel = path.relative(root, threadDir(fs.realpathSync(file))).split(path.sep).join("/");
+  // Ask git where the file sits in the repository rather than comparing
+  // paths: on Windows the same folder can be spelled two ways (8.3 short
+  // names such as RUNNER~1), and a relative path between them is nonsense.
+  const prefix = git(path.dirname(path.resolve(file)), ["rev-parse", "--show-prefix"]).stdout.trim();
+  const rel = `${prefix}${path.basename(threadDir(file))}`;
   const found = new Map();
   for (const [ref, sha] of otherRefs(root)) {
     const cacheKey = `${root}|${rel}|${sha}`;
