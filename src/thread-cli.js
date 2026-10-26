@@ -7,9 +7,12 @@ import {
   createThread,
   humanAuthor,
   listThreads,
+  PALETTE,
+  readProfile,
   replyToThread,
   setThreadStatus,
   threadDir,
+  writeProfile,
 } from "./threads.js";
 
 /**
@@ -30,15 +33,17 @@ Shared review threads (stored beside the file in <file>.review/, meant to be com
   human-review reply <file> <thread-id> --body <message>
   human-review resolve|reopen|accept|reject|applied <file> <thread-id> [--body <note>]
       --prefix/--suffix <text>     Text just before/after the quote, when it appears more than once
-      --agent <name> [--model <id>]  Write as an agent (default: you, from git config user.name)
+      --agent <name> [--model <id>]  Write as an agent (default: you, from your profile or git config user.name)
       --as <name>                  Write as a named person
+      --color <#rrggbb>            Highlight colour for what you write (default: your profile's, or one picked from the name)
+  human-review profile [--name <name>] [--color <#rrggbb>]  Show or set your reviewer name and colour
 `;
 
-export const THREAD_COMMANDS = new Set(["threads", "text", "comment", "suggest", "reply", "resolve", "reopen", "accept", "reject", "applied"]);
+export const THREAD_COMMANDS = new Set(["profile", "threads", "text", "comment", "suggest", "reply", "resolve", "reopen", "accept", "reject", "applied"]);
 
 const STATUS_VERBS = { resolve: "resolved", reopen: "open", accept: "accepted", reject: "rejected", applied: "applied" };
 
-const VALUE_FLAGS = new Set(["--quote", "--prefix", "--suffix", "--body", "--replacement", "--agent", "--model", "--as"]);
+const VALUE_FLAGS = new Set(["--quote", "--prefix", "--suffix", "--body", "--replacement", "--agent", "--model", "--as", "--color", "--name"]);
 
 function parse(rest) {
   const flags = {};
@@ -65,9 +70,16 @@ function reviewedFile(input) {
 }
 
 function author(flags, file) {
-  if (flags.agent) return { name: String(flags.agent), type: "agent", ...(flags.model ? { model: String(flags.model) } : {}) };
-  if (flags.as) return { name: String(flags.as), type: "human" };
-  return humanAuthor(file);
+  const color = flags.color ? checkColor(flags.color) : undefined;
+  if (flags.agent) return { name: String(flags.agent), type: "agent", ...(flags.model ? { model: String(flags.model) } : {}), ...(color ? { color } : {}) };
+  if (flags.as) return { name: String(flags.as), type: "human", ...(color ? { color } : {}) };
+  const me = humanAuthor(file);
+  return color ? { ...me, color } : me;
+}
+
+function checkColor(color) {
+  if (!/^#[0-9a-f]{6}$/i.test(String(color))) throw new Error(`--color wants a hex colour like ${PALETTE[0]}`);
+  return String(color).toLowerCase();
 }
 
 /** Pin the quote to the rendered page, so the browser can highlight it. */
@@ -101,6 +113,20 @@ const print = (thread) => process.stdout.write(`${JSON.stringify(thread, null, 2
 export async function runThreadCommand(argv) {
   const [command, ...rest] = argv;
   const { flags, positional } = parse(rest);
+
+  if (command === "profile") {
+    let profile = readProfile();
+    if (flags.name !== undefined || flags.color !== undefined) {
+      profile = writeProfile({
+        name: flags.name !== undefined ? String(flags.name) : profile.name,
+        color: flags.color !== undefined ? checkColor(flags.color) : profile.color,
+      });
+    }
+    process.stdout.write(`${JSON.stringify({ ...profile, palette: PALETTE }, null, 2)}
+`);
+    return;
+  }
+
   const file = reviewedFile(positional[0]);
 
   if (command === "text") {

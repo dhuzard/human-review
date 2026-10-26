@@ -42,6 +42,7 @@ const state = {
   artifactToken: "",
   leftover: null,
   composeMode: "agent",
+  profile: null,
   showClosed: false,
   threadAnchors: new Set(),
 };
@@ -333,6 +334,7 @@ function render() {
   }
 
   renderThreads(page);
+  renderProfile(page);
 
   // --- your edits
   const box = $("editsBox");
@@ -691,7 +693,7 @@ function anchorsFor(page) {
   const threads = ((page && page.threads) || []).filter(isLive);
   return [
     ...((page && page.comments) || []),
-    ...threads.map((t) => ({ id: t.id, kind: "selection", anchor: t.anchor, shared: t.kind })),
+    ...threads.map((t) => ({ id: t.id, kind: "selection", anchor: t.anchor, shared: t.kind, color: t.author.color })),
   ];
 }
 
@@ -736,6 +738,13 @@ function authorName(author) {
   return `${author.name}${you}`;
 }
 
+function swatch(color) {
+  const dot = document.createElement("span");
+  dot.className = "swatch";
+  if (color) dot.style.background = color;
+  return dot;
+}
+
 function badge(text, extra = "") {
   const el = document.createElement("span");
   el.className = `badge${extra ? ` ${extra}` : ""}`;
@@ -752,7 +761,7 @@ function threadCard(thread) {
   head.className = "comment-head";
   const who = document.createElement("span");
   who.className = "who";
-  who.append(authorName(thread.author));
+  who.append(swatch(thread.author.color), authorName(thread.author));
   if (thread.author.type === "agent") who.append(badge(thread.author.model ? `agent · ${thread.author.model}` : "agent", "agent"));
   const sep = document.createElement("span");
   sep.className = "sep";
@@ -775,6 +784,7 @@ function threadCard(thread) {
 
   const quote = document.createElement("p");
   quote.className = "quote";
+  if (thread.author.color) quote.style.borderLeftColor = thread.author.color;
   if (thread.kind === "suggestion") {
     const del = document.createElement("del");
     del.textContent = tidy(thread.anchor.quote, 140);
@@ -792,7 +802,7 @@ function threadCard(thread) {
     p.className = "msg";
     const name = document.createElement("span");
     name.className = "msg-who";
-    name.textContent = message.author.type === "agent" ? `${message.author.name} (agent)` : authorName(message.author);
+    name.append(swatch(message.author.color), message.author.type === "agent" ? `${message.author.name} (agent)` : authorName(message.author));
     p.append(name, message.body);
     msgs.append(p);
   }
@@ -843,6 +853,76 @@ function threadCard(thread) {
   card.append(actions, reply);
   card.addEventListener("click", () => setActive(thread.id, false));
   return card;
+}
+
+// ------------------------------------------------------------------ profile
+
+/** The chip in the rail head shows who you are in shared threads. */
+function renderProfile(page) {
+  const me = page.me;
+  $("whoami").hidden = !me;
+  if (!me) return;
+  $("whoName").textContent = me.name;
+  $("whoSwatch").style.background = me.color || "";
+}
+
+async function openProfile() {
+  const box = $("profileBox");
+  if (!box.hidden) return closeProfile();
+  let data;
+  try {
+    data = await api("/api/profile");
+  } catch (err) {
+    toast(err.message);
+    return;
+  }
+  const me = (state.page && state.page.me) || {};
+  state.profile = { color: data.profile.color || me.color || data.palette[0], palette: data.palette };
+  $("profileName").value = data.profile.name || me.name || "";
+  renderSwatches();
+  box.hidden = false;
+  $("profileName").focus();
+  $("profileName").select();
+}
+
+function renderSwatches() {
+  const row = $("profileSwatches");
+  row.textContent = "";
+  for (const color of state.profile.palette) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.style.background = color;
+    button.title = color;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", String(color === state.profile.color));
+    button.className = color === state.profile.color ? "on" : "";
+    button.addEventListener("click", () => {
+      state.profile.color = color;
+      renderSwatches();
+    });
+    row.append(button);
+  }
+}
+
+function closeProfile() {
+  $("profileBox").hidden = true;
+  state.profile = null;
+}
+
+async function saveProfile() {
+  const name = $("profileName").value.trim();
+  if (!name) {
+    toast("Pick a name co-authors will recognise");
+    return;
+  }
+  try {
+    await api("/api/profile", { method: "POST", body: JSON.stringify({ name, color: state.profile.color }) });
+    closeProfile();
+    replacePage(state, await api(pageUrl(state.key, state.sessionId)));
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 function renderThreads(page) {
@@ -1083,6 +1163,20 @@ $("composeReplacement").addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     event.preventDefault();
     cancelCompose();
+  }
+});
+$("whoami").addEventListener("click", openProfile);
+$("profileSave").addEventListener("click", saveProfile);
+$("profileCancel").addEventListener("click", closeProfile);
+$("profileName").addEventListener("keydown", (event) => {
+  event.stopPropagation();
+  if (event.key === "Enter" && !isImeCommitEnter(event)) {
+    event.preventDefault();
+    saveProfile();
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeProfile();
   }
 });
 $("threadClosed").addEventListener("click", () => {

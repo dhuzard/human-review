@@ -53,6 +53,8 @@ function writeDoc(name = "plan.md") {
 
 const anchor = (quote) => ({ prefix: "", quote, suffix: "" });
 const agent = { name: "Claude Code", type: "agent", model: "claude-opus-5-5" };
+// Every stored author carries a colour; one who never picked gets a stable one.
+const signed = (a) => ({ ...a, color: threads.colorFor(a.name) });
 
 test("threads live beside the file, one JSON file each, oldest first", () => {
   const file = writeDoc();
@@ -62,7 +64,7 @@ test("threads live beside the file, one JSON file each, oldest first", () => {
   assert.deepEqual(threads.listThreads(file).map((t) => t.id), [a.id, b.id].sort());
   assert.equal(a.author.type, "human");
   assert.ok(a.author.name);
-  assert.deepEqual(b.author, agent);
+  assert.deepEqual(b.author, signed(agent));
   assert.equal(b.messages.length, 0, "a suggestion needs no message");
 });
 
@@ -96,7 +98,7 @@ test("statuses follow the thread kind, and every change is recorded", () => {
   const applied = threads.setThreadStatus(file, s.id, "applied", { author: agent });
   assert.equal(applied.status, "applied");
   assert.equal(applied.messages.at(-1).body, "Agreed");
-  assert.deepEqual(applied.history.at(-1).by, agent);
+  assert.deepEqual(applied.history.at(-1).by, signed(agent));
 });
 
 test("agent work is open asks plus accepted suggestions, and an agent reply answers the ask", () => {
@@ -134,7 +136,7 @@ test("the CLI writes threads as an agent, anchored to the rendered text", () => 
   assert.equal(made.status, 0, made.stderr);
   const thread = JSON.parse(made.stdout);
   assert.equal(thread.kind, "suggestion");
-  assert.deepEqual(thread.author, agent);
+  assert.deepEqual(thread.author, signed(agent));
   assert.match(thread.anchor.prefix, /Sensors record $/, "context comes from the rendered page, so the bold markup is gone");
 
   const source = run(["comment", "plan.md", "--quote", "**every**", "--body", "x"], dir);
@@ -236,4 +238,59 @@ test("an open page hears about threads written outside the browser", async (t) =
   await new Promise((r) => setTimeout(r, 200));
   threads.createThread(file, { kind: "comment", anchor: anchor("weekly"), body: "From the CLI", author: agent });
   assert.equal(await heard, true);
+});
+
+test("a reviewer's chosen name and colour sign their threads; others get a stable colour", () => {
+  const file = writeDoc();
+  threads.writeProfile({ name: "Damien H.", color: "#D6487E" });
+  try {
+    const mine = threads.createThread(file, { kind: "comment", anchor: anchor("weekly"), body: "Mine" });
+    assert.deepEqual(mine.author, { name: "Damien H.", type: "human", color: "#d6487e" });
+    const theirs = threads.createThread(file, { kind: "comment", anchor: anchor("second"), body: "Theirs", author: { name: "Cyril", type: "human" } });
+    assert.equal(theirs.author.color, threads.colorFor("Cyril"));
+    assert.ok(threads.PALETTE.includes(theirs.author.color));
+    const bad = threads.createThread(file, { kind: "comment", anchor: anchor("every"), body: "x", author: { name: "Eve", type: "human", color: "red; background:url(x)" } });
+    assert.equal(bad.author.color, threads.colorFor("Eve"), "only #rrggbb colours are kept");
+
+    // A thread from before colours existed is painted on read.
+    const legacy = { ...mine, author: { name: "Old", type: "human" }, messages: [{ id: "m_1", author: { name: "Old", type: "human" }, body: "x", at: mine.created_at }] };
+    assert.equal(threads.withColors(legacy).messages[0].author.color, threads.colorFor("Old"));
+  } finally {
+    threads.writeProfile({ name: "", color: "" });
+  }
+});
+
+test("the profile route sets the name and colour the browser writes threads with", async (t) => {
+  const { port, token, dispose } = await start();
+  t.after(() => {
+    threads.writeProfile({ name: "", color: "" });
+    dispose();
+  });
+  const file = writeDoc();
+  const { key } = (await request(port, token, { method: "POST", route: "/api/session", body: { file } })).json();
+  const set = await request(port, token, { method: "POST", route: "/api/profile", body: { name: "Konstantin", color: "#1f9fa3" } });
+  assert.equal(set.status, 200);
+  assert.deepEqual(set.json().profile, { name: "Konstantin", color: "#1f9fa3" });
+  assert.equal(set.json().palette.length, threads.PALETTE.length);
+  const page = (await request(port, token, { route: `/api/page/${key}` })).json();
+  assert.deepEqual(page.me, { name: "Konstantin", type: "human", color: "#1f9fa3" });
+  const made = await request(port, token, { method: "POST", route: `/api/page/${key}/thread`, body: { kind: "comment", anchor: anchor("weekly"), body: "Hi" } });
+  assert.equal(made.json().thread.author.name, "Konstantin");
+});
+
+test("the CLI shows and sets the profile, and --color signs agent writes", () => {
+  const file = writeDoc();
+  const dir = path.dirname(file);
+  try {
+    const set = run(["profile", "--name", "Pierre", "--color", "#8a5cd6"], dir);
+    assert.equal(set.status, 0, set.stderr);
+    assert.equal(JSON.parse(set.stdout).name, "Pierre");
+    assert.notEqual(run(["profile", "--color", "purple"], dir).status, 0);
+    const mine = JSON.parse(run(["comment", "plan.md", "--quote", "every second", "--body", "x"], dir).stdout);
+    assert.deepEqual(mine.author, { name: "Pierre", type: "human", color: "#8a5cd6" });
+    const bot = JSON.parse(run(["comment", "plan.md", "--quote", "every second", "--body", "y", "--agent", "Codex", "--color", "#E08A1E"], dir).stdout);
+    assert.equal(bot.author.color, "#e08a1e");
+  } finally {
+    threads.writeProfile({ name: "", color: "" });
+  }
 });

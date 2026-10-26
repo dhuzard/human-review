@@ -89,6 +89,9 @@ who reviews the same file — people and agents alike:
 - Tick **Ask an agent** to put a thread on an agent's list. It arrives with your
   next Send, and the agent answers in the thread. Accepted suggestions are
   applied to the source by an agent, which then marks them applied.
+- Click your name at the top of the rail to choose the **name and highlight
+  colour** co-authors see on your threads (`human-review profile` does the same
+  from a terminal). Each reviewer's threads tint the page in their colour.
 - Agents take part through the CLI (`human-review threads`, `comment`, `suggest`,
   `reply`, `accept`, `applied`, …; run `human-review --help`), signed with their
   name and model.

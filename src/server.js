@@ -7,7 +7,20 @@ import { atomicWrite, Store, resolveAsset } from "./state.js";
 import { injectSdk, stripSdk } from "./html-transform.js";
 import { isMarkdown, renderMarkdownPage } from "./markdown.js";
 import { isLatex, loadLatex, renderLatexPage } from "./latex.js";
-import { agentWork, createThread, humanAuthor, listThreads, replyToThread, setAskAgent, setThreadStatus, threadsSignature } from "./threads.js";
+import {
+  agentWork,
+  createThread,
+  humanAuthor,
+  listThreads,
+  PALETTE,
+  readProfile,
+  replyToThread,
+  setAskAgent,
+  setThreadStatus,
+  threadsSignature,
+  withColors,
+  writeProfile,
+} from "./threads.js";
 import { canonicalTarget, ensureStateDir, localUrl, SERVER_PROTOCOL, serverPath, stateDir, targetKey } from "./paths.js";
 import { invocation, shellQuote } from "./setup.js";
 
@@ -742,7 +755,7 @@ export function createServer() {
 
   /** Shared threads live beside the file; a localhost route has nowhere to keep them. */
   function threadFields(file) {
-    const threads = listThreads(file);
+    const threads = listThreads(file).map(withColors);
     return { threads, me: humanAuthor(file), agentThreads: agentWork(threads).length };
   }
 
@@ -988,6 +1001,17 @@ export function createServer() {
       }
 
       // --- agent status probe: is feedback waiting? is anyone listening?
+      // Who this reviewer is in shared threads: a chosen name and highlight colour.
+      if (route === "/api/profile") {
+        if (req.method === "POST") {
+          const body = await readBody(req);
+          writeProfile({ name: body.name, color: body.color });
+          // Every open page shows "(you)" and the colour from the profile.
+          for (const session of sessions.values()) emit(session, "threads", { key: session.activeKey });
+        } else if (req.method !== "GET") return json(res, 405, { error: "GET or POST" });
+        return json(res, 200, { profile: readProfile(), palette: PALETTE });
+      }
+
       if (route === "/api/status" && req.method === "GET") {
         const entryKey = targetKey(url.searchParams.get("target") || url.searchParams.get("file") || "");
         const pending = batches.get(entryKey) || store.batchFromDisk(entryKey);

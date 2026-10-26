@@ -197,7 +197,9 @@ npx -y human-review applied paper.tex <thread-id> --agent "<your name>"
 ```
 
 - Always pass `--agent` (and `--model`) when you write, so people can tell your
-  words from theirs. Without it the command writes as the git user.
+  words from theirs. Without it the command writes as the human reviewer (their
+  chosen profile, else the git user). `--color '#rrggbb'` sets your highlight colour;
+  otherwise one is picked from your name.
 - Quotes are **rendered** text, as in feedback batches. If a quote appears more
   than once, add `--prefix` or `--suffix`; if it is not found, read `text`.
 - Threads waiting on you also arrive in feedback batches under `threads`:

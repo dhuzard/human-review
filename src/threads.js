@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { atomicWrite } from "./state.js";
+import { ensureStateDir, stateDir } from "./paths.js";
 
 /**
  * Shared review threads: comments and suggested changes that co-authors and
@@ -39,10 +40,47 @@ const newMessageId = () => `m_${crypto.randomBytes(4).toString("hex")}`;
 
 // ------------------------------------------------------------------ authors
 
+/** Highlight colours that stay readable as a tint on light and dark pages. */
+export const PALETTE = ["#4682e6", "#3ca05a", "#8a5cd6", "#e08a1e", "#d6487e", "#1f9fa3", "#d04a3a", "#8a9a2a"];
+
+const validColor = (color) => /^#[0-9a-f]{6}$/i.test(String(color || ""));
+
+/** A stable colour per name, for authors who never picked one. */
+export function colorFor(name) {
+  const sum = crypto.createHash("sha1").update(String(name || "")).digest()[0];
+  return PALETTE[sum % PALETTE.length];
+}
+
+const profilePath = () => path.join(stateDir(), "profile.json");
+
+/**
+ * The name and colour this reviewer chose. It lives in the state directory,
+ * not in the browser: the review server's port changes between runs, and
+ * browser storage is per port. The CLI reads it too, so a person signs the
+ * same way from both.
+ */
+export function readProfile() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(profilePath(), "utf8"));
+    return {
+      name: String(raw.name || "").trim().slice(0, 120),
+      color: validColor(raw.color) ? raw.color.toLowerCase() : "",
+    };
+  } catch {
+    return { name: "", color: "" };
+  }
+}
+
+export function writeProfile({ name = "", color = "" } = {}) {
+  const profile = { name: String(name).trim().slice(0, 120), color: validColor(color) ? String(color).toLowerCase() : "" };
+  ensureStateDir();
+  atomicWrite(profilePath(), `${JSON.stringify(profile, null, 2)}\n`);
+  return profile;
+}
+
 const gitNames = new Map();
 
-/** The person at this keyboard: their git name for the file's repository, else their login. */
-export function humanAuthor(file) {
+function gitName(file) {
   const dir = path.dirname(path.resolve(file));
   if (!gitNames.has(dir)) {
     let name = "";
@@ -57,7 +95,14 @@ export function humanAuthor(file) {
     }
     gitNames.set(dir, name || "Reviewer");
   }
-  return { name: gitNames.get(dir), type: "human" };
+  return gitNames.get(dir);
+}
+
+/** The person at this keyboard: their chosen profile, else their git name for the file's repository, else their login. */
+export function humanAuthor(file) {
+  const profile = readProfile();
+  const name = profile.name || gitName(file);
+  return { name, type: "human", color: profile.color || colorFor(name) };
 }
 
 /** Normalize an author record from a client; only the fields we know survive. */
@@ -66,7 +111,19 @@ export function cleanAuthor(author, fallback) {
   const type = author.type === "agent" ? "agent" : "human";
   const out = { name: String(author.name).trim().slice(0, 120), type };
   if (type === "agent" && String(author.model || "").trim()) out.model = String(author.model).trim().slice(0, 120);
+  out.color = validColor(author.color) ? String(author.color).toLowerCase() : colorFor(out.name);
   return out;
+}
+
+/** Threads written before colours existed still get one, the same on every machine. */
+export function withColors(thread) {
+  const paint = (a) => (a && !validColor(a.color) ? { ...a, color: colorFor(a.name) } : a);
+  return {
+    ...thread,
+    author: paint(thread.author),
+    messages: thread.messages.map((m) => ({ ...m, author: paint(m.author) })),
+    history: (thread.history || []).map((h) => ({ ...h, by: paint(h.by) })),
+  };
 }
 
 // ------------------------------------------------------------------ reading
